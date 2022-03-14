@@ -56,10 +56,23 @@ ThingerESP32 thing(iot_user, iot_device, iot_credential);
 
 
 
+////// RTC
+RTC_TimeTypeDef RTC_TimeStruct;
+RTC_DateTypeDef RTC_DateStruct;
+
+
+
 ////// Enviroment III unit
 #include "UNIT_ENV.h"
 SHT3X sht30;
 QMP6988 qmp6988;
+
+
+
+////// NCIR sensor
+#include <Adafruit_MLX90614.h>
+Adafruit_MLX90614 NCIR = Adafruit_MLX90614();
+
 
 
 
@@ -79,25 +92,32 @@ String IoT_Group = F("");
 String IoT_Station_Name = F("Tor Rey IoT");
 String Firmware = F("v1.0.0");
 
+// Pins
+Rx_PIN;
+Tx_PIN;
 
 
+////// Time variables
+DateTime RTCnow;    // UTC Date-Time class from RTC
+time_t LastNTP;     // Last UTP time that the RTC was updated form NTP
+time_t UTC_t;       // UTC UNIX time stamp
+time_t local_t;     // Local time with DST adjust in UNIX time stamp format
+time_t SD_local_t;  // Recorded UNIX time stamp
+int s = -1;		    // Seconds
+int m = -1;		    // Minutes
+int h = -1;		    // Hours
+int dy = -1;	    // Day
+int mo = -1;	    // Month
+int yr = -1;	    // Year
 
-// PINs
-/*
-const int CO2In = G36;
-const int CO2Range = 2000;
-const int Rx_PIN = G32;
-const int Tx_PIN = G33;
-*/
 
 // State Variables
 const int IoT_interval = 1;     // upload interval in minutes
 const int Meassure_interval = 10;    // upload measure interval in seconds
-const int LastSec = -1;           // Last second that sensor values where measured
 const int LastLcd = -1;           // Last time the screen was updated
 const int LastSum = -1;			// Last minute that variables were added to the sum for later averaging
 const int SumNum = 0;				// Number of times a variable value has beed added to the sum for later averaging
-const int LastIoT= -1;			// Last minute that variables were uploadad IoT
+const int LastAvg= -1;			// Last minute that variables were averaged
 
 
 // Variables
@@ -108,7 +128,7 @@ float RHair = 0;    // Relative Humedity of air
 float Patm = 0;     // Atmosferic Pressure
 float Tleaf = 0;    // Leaf temperature
 float AirWaterP = 0;    // Air water vapor pressure in kPa
-float WaterLeafP = 0;   // Leaf Pressure in kPa
+float LeafWaterP = 0;   // Leaf Pressure in kPa
 float VPD = 0;  // Vapor Pressure Deficit
 
 float TairSum = 0;     
@@ -116,7 +136,7 @@ float RHairSum = 0;
 float PatmSum = 0;     
 float TleafSum = 0;   
 float AirWaterPSum = 0;    
-float WaterLeafPSum = 0;   
+float LeafWaterPSum = 0;   
 float VPDSum = 0;  
 
 float TairAvg = 0;
@@ -124,7 +144,7 @@ float RHairAvg = 0;
 float PatmAvg = 0;
 float TleafAvg = 0;
 float AirWaterPAvg = 0;
-float WaterLeafPAvg = 0;
+float LeafWaterPAvg = 0;
 float VPDAvg = 0;
 
 
@@ -140,6 +160,8 @@ void setup() {
     ////// Initialize and setup M5Stack
     M5.begin(true, true, true);
     M5.Lcd.println(F("M5 started"));
+    Serial.begin(115200);
+    Serial2.begin(9600, SERIAL_8N1, Rx_PIN, Tx_PIN);
     // Serial2.begin(unsigned long baud, uint32_t config, int8_t rxPin, int8_t txPin, bool invert)
 
 
@@ -179,22 +201,38 @@ void setup() {
     if (password == "") { thing.add_wifi(ssid); }
     else { thing.add_wifi(ssid, password); }
    
-
-
     // Define output resources
     thing["RT_Tair"] >> [](pson& out) { out = Tair; };
     thing["RT_RHair"] >> [](pson& out) { out = RHair; };
     thing["RT_Atmmosferic_Pressure"] >> [](pson& out) { out = Patm; };
     thing["RT_VPD"] >> [](pson& out) { out = VPD; };
     
-    thing["Avg_Tair"] >> [](pson& out) { out = TairAvg; };
-    thing["Avg_RHair"] >> [](pson& out) { out = RHairAvg; };
-    thing["Avg_Atmmosferic_Pressure"] >> [](pson& out) { out = PatmAvg; };
-    thing["Avg_VPD"] >> [](pson& out) { out = VPDAvg; };
+    thing["Avg_Data"] >> [](pson& out) {
+        out["Avg_Tair"] = out = TairAvg;
+        out["Avg_RHair"] = out = RHairAvg;
+        out["Avg_Atmmosferic_Pressure"] = out = PatmAvg;
+        out["Avg_VPD"] = out = VPDAvg;
+        out["UNIX_local"] = out = local_t;   
+    };
 
 
-    // Start Environmental III Unit
+
+
+
+    ////// Start RTC
+    
+    
+    
+    ////// Start Environmental III Unit
     qmp6988.init();     // Initialize pressure sensor
+
+
+
+    ////// Start NCIR
+    NCIR.begin();
+    Serial.print(F("Emmisivity: "));
+    Serial.println(NCIR.readEmissivity());
+
 
 
 
@@ -216,45 +254,93 @@ void setup() {
 // The loop function runs over and over again until power down or reset //
 //////////////////////////////////////////////////////////////////////////
 void loop() {
+    ////// State 0. Test internet connection; if not, try to connect.
+    if (WiFi.status() != WL_CONNECTED) { WiFi.disconnect(); }
+    if (WiFi.status() != WL_CONNECTED &&
+        UTC_t - t_WiFiCnxTry > WiFiCnx_frq) {
+        Serial.println(F("Loop reconect try"));
+        WiFi.begin(ssid, password);
+
+        t_WiFiCnxTry = UTC_t;
+    }
+    
+    
+    
     ////// State 1. Keep the Iot engine runing
     thing.handle();
 
 
-    ////// State 2. Read sensor 
+    ////// State 2. Get time from RTC time
+    
+    
+    
+    ////// State 3. Check if it is time to read sensors nad updtae screen
+    if ((s % Meassure_interval == 0) && (s != LastSum)) {
+        // Read sensors 
+        Tair = sht30.cTemp;  //Store the temperature obtained from shT30. 
+        RHair = sht30.humidity; //Store the humidity obtained from the SHT30.  
+        Patm = qmp6988.calcPressure();
+        Tleaf = ;
+        
+
+        // Caulculate VPD
+        VPD = CalculateVPD(Tair, RHair, Tleaf);
 
 
-
-    ////// State 3. Update Screen
+        // Update Screen
     // Reset screen
-    M5.Lcd.fillScreen(BLACK);
-    M5.Lcd.setTextColor(WHITE);
-    M5.Lcd.setCursor(0, 0);
-    // CO2 mVolt
-    M5.Lcd.setTextSize(2.5);
-    M5.Lcd.println();
-    M5.Lcd.println(" CO2 mV:");
-    M5.Lcd.println();
-    M5.Lcd.setTextSize(3.5);
-    M5.Lcd.print(" ");
-    M5.Lcd.println(CO2mVolt, 1);
-    M5.Lcd.println();
-    // CO2 ppm
-    M5.Lcd.setTextSize(2.5);
-    M5.Lcd.println(" CO2 ppm:");
-    M5.Lcd.println();
-    M5.Lcd.setTextSize(3.5);
-    M5.Lcd.print(" ");
-    M5.Lcd.println(CO2ppm, 1);
-    M5.Lcd.println();
-    // Calibration status
-    /*
-    M5.Lcd.setTextSize(2.5);
-    M5.Lcd.println(" Is Cal?");
-    M5.Lcd.println();
-    M5.Lcd.setTextSize(3.5);
-    M5.Lcd.print(" ");
-    M5.Lcd.println(IsCal);
-    */
+        M5.Lcd.fillScreen(BLACK);
+        M5.Lcd.setTextColor(WHITE);
+        M5.Lcd.setCursor(0, 0);
+        // CO2 mVolt
+        M5.Lcd.setTextSize(2.5);
+        M5.Lcd.println();
+        M5.Lcd.println(" CO2 mV:");
+        M5.Lcd.println();
+        M5.Lcd.setTextSize(3.5);
+        M5.Lcd.print(" ");
+        M5.Lcd.println(0000000);
+        M5.Lcd.println();
+        // CO2 ppm
+        M5.Lcd.setTextSize(2.5);
+        M5.Lcd.println(" CO2 ppm:");
+        M5.Lcd.println();
+        M5.Lcd.setTextSize(3.5);
+        M5.Lcd.print(" ");
+        M5.Lcd.println(000000);
+        M5.Lcd.println();
+        // Calibration status
+        /*
+        M5.Lcd.setTextSize(2.5);
+        M5.Lcd.println(" Is Cal?");
+        M5.Lcd.println();
+        M5.Lcd.setTextSize(3.5);
+        M5.Lcd.print(" ");
+        M5.Lcd.println(IsCal);
+        */
+
+        // Sum values
+        TairSum += Tair;
+        RHairSum += RHair;
+        PatmSum += Patm;
+        TleafSum += Tleaf;
+        VPDSum += VPD; 
+
+        SumNum += 1;
+        LastSum = s;
+
+    }
+
+
+
+    ////// State 4. Check if it is time to average and send values to IoT
+    if ((m % IoT_interval == 0) && (m != LastAvg)) {
+
+    }
+
+
+
+    
 
 
     //
@@ -300,4 +386,15 @@ unsigned int hexToDec(String hexString) {
     }
 
     return decValue;
+}
+
+
+float CalculateVPD(float AirTemp, float AirRH, float LeafTemp) {
+    float result = 0;
+    AirWaterPSum = /*Tarea*/;
+    LeafWaterPSum = /*Tarea*/ ;
+    result = AirWaterPSum - LeafWaterPSum;
+
+    return result;
+
 }
