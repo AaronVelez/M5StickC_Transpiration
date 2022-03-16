@@ -101,5 +101,6 @@ typedef long pthread_cond_t;
 #define ESP_LOGI(tag, ...)
 
 #include "Main.ino"
+#include "Time Functions_BM8563.ino"
 #endif
 #endif

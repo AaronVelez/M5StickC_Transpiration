@@ -16,6 +16,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Main.ino" />
+    <None Include="Time Functions_BM8563.ino" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="__vm\.Main.vsarduino.h">

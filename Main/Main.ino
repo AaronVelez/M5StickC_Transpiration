@@ -1,5 +1,5 @@
 /*
- Name:		Calibration.ino
+ Name:		Main.ino
  Created:	3/14/2022 10:00 AM
  Authors:	Emmanuel Reyes, Jessica Jacobo, Paola Carrera, Aarón Vélez
 */
@@ -39,6 +39,8 @@ const char iot_data_bucket[] = IoT_DATA_BUCKET;
 #include <Wire.h>
 #include <SPI.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
+WiFiUDP ntpUDP;
 
 
 ////// Iot Thinger
@@ -56,20 +58,32 @@ ThingerESP32 thing(iot_user, iot_device, iot_credential);
 
 
 
-////// RTC
+////// Time libraries
+// Integrated RTC definitions
 RTC_TimeTypeDef RTC_TimeStruct;
 RTC_DateTypeDef RTC_DateStruct;
+#include <TimeLib.h>
+#include <NTPClient.h>
+NTPClient timeClient(ntpUDP, "north-america.pool.ntp.org", 0, 300000); // For details, see https://github.com/arduino-libraries/NTPClient
+// Time zone library
+#include <Timezone.h>
+//  Central Time Zone (Mexico City)
+TimeChangeRule mxCDT = { "CDT", First, Sun, Apr, 2, -300 };
+TimeChangeRule mxCST = { "CST", Last, Sun, Oct, 2, -360 };
+Timezone mxCT(mxCDT, mxCST);
 
 
 
-////// Enviroment III unit
+
+
+////// Enviroment III unit library
 #include "UNIT_ENV.h"
 SHT3X sht30;
 QMP6988 qmp6988;
 
 
 
-////// NCIR sensor
+////// NCIR sensor library
 #include <Adafruit_MLX90614.h>
 Adafruit_MLX90614 NCIR = Adafruit_MLX90614();
 
@@ -92,17 +106,18 @@ String IoT_Group = F("");
 String IoT_Station_Name = F("Tor Rey IoT");
 String Firmware = F("v1.0.0");
 
-// Pins
-Rx_PIN;
-Tx_PIN;
+bool debug = true;
+
+
+////// PINs
+const int Rx_PIN = 25;
+const int Tx_PIN = 26;
 
 
 ////// Time variables
-DateTime RTCnow;    // UTC Date-Time class from RTC
 time_t LastNTP;     // Last UTP time that the RTC was updated form NTP
 time_t UTC_t;       // UTC UNIX time stamp
 time_t local_t;     // Local time with DST adjust in UNIX time stamp format
-time_t SD_local_t;  // Recorded UNIX time stamp
 int s = -1;		    // Seconds
 int m = -1;		    // Minutes
 int h = -1;		    // Hours
@@ -114,22 +129,31 @@ int yr = -1;	    // Year
 // State Variables
 const int IoT_interval = 1;     // upload interval in minutes
 const int Meassure_interval = 10;    // upload measure interval in seconds
-const int LastLcd = -1;           // Last time the screen was updated
-const int LastSum = -1;			// Last minute that variables were added to the sum for later averaging
-const int SumNum = 0;				// Number of times a variable value has beed added to the sum for later averaging
-const int LastAvg= -1;			// Last minute that variables were averaged
+int LastLcd = -1;           // Last time the screen was updated
+int LastSum = -1;			// Last minute that variables were added to the sum for later averaging
+int SumNum = 0;				// Number of times a variable value has beed added to the sum for later averaging
+int LastAvg= -1;			// Last minute that variables were averaged
+
+time_t t_WiFiCnxTry = 0;      // Last time a (re)connection to internet happened
+const int WiFiCnx_frq = 30;  // (re)connection to internet frequency in seconds
+
 
 
 // Variables
 const int n = 500;       // measure n times the ADC input for averaging
  
-float Tair = 0;     // Air temperature
-float RHair = 0;    // Relative Humedity of air
-float Patm = 0;     // Atmosferic Pressure
-float Tleaf = 0;    // Leaf temperature
+float Tair = 0;         // Air temperature
+float RHair = 0;        // Relative Humedity of air
+float Patm = 0;         // Atmosferic Pressure
+float Tleaf = 0;        // Leaf temperature
 float AirWaterP = 0;    // Air water vapor pressure in kPa
 float LeafWaterP = 0;   // Leaf Pressure in kPa
-float VPD = 0;  // Vapor Pressure Deficit
+float VPD = 0;          // Vapor Pressure Deficit
+float Weight = 0;       // Balance weight in grams
+
+char ScaleMessage[50];
+String str;
+String ScaleStatus;
 
 float TairSum = 0;     
 float RHairSum = 0;    
@@ -138,6 +162,7 @@ float TleafSum = 0;
 float AirWaterPSum = 0;    
 float LeafWaterPSum = 0;   
 float VPDSum = 0;  
+float WeightSum = 0;
 
 float TairAvg = 0;
 float RHairAvg = 0;
@@ -146,7 +171,7 @@ float TleafAvg = 0;
 float AirWaterPAvg = 0;
 float LeafWaterPAvg = 0;
 float VPDAvg = 0;
-
+float WeightAvg = 0;
 
 
 
@@ -163,7 +188,9 @@ void setup() {
     Serial.begin(115200);
     Serial2.begin(9600, SERIAL_8N1, Rx_PIN, Tx_PIN);
     // Serial2.begin(unsigned long baud, uint32_t config, int8_t rxPin, int8_t txPin, bool invert)
-
+    // Disable G36 to use G25
+    gpio_pulldown_dis(GPIO_NUM_36);
+    gpio_pullup_dis(GPIO_NUM_36);
 
 #ifdef WiFi_SSID_is_HEX
     String ssidStr = HexString2ASCIIString(ssidHEX);
@@ -196,6 +223,9 @@ void setup() {
     }
 
 
+
+
+
     ////// Configure IoT
     M5.Lcd.println(F("Configuring IoT..."));
     if (password == "") { thing.add_wifi(ssid); }
@@ -206,13 +236,16 @@ void setup() {
     thing["RT_RHair"] >> [](pson& out) { out = RHair; };
     thing["RT_Atmmosferic_Pressure"] >> [](pson& out) { out = Patm; };
     thing["RT_VPD"] >> [](pson& out) { out = VPD; };
-    
+    thing["RT_Weight"] >> [](pson& out) { out = Weight; };
+    thing["RT_Scale_Status"] >> [](pson& out) { out = ScaleStatus; };
+
     thing["Avg_Data"] >> [](pson& out) {
-        out["Avg_Tair"] = out = TairAvg;
-        out["Avg_RHair"] = out = RHairAvg;
-        out["Avg_Atmmosferic_Pressure"] = out = PatmAvg;
-        out["Avg_VPD"] = out = VPDAvg;
-        out["UNIX_local"] = out = local_t;   
+        out["Avg_Tair"] = TairAvg;
+        out["Avg_RHair"] = RHairAvg;
+        out["Avg_Atmmosferic_Pressure"] = PatmAvg;
+        out["Avg_VPD"] = VPDAvg;
+        out["Avg_Weight"] = WeightAvg;
+        out["UNIX_local"] = local_t;   
     };
 
 
@@ -220,11 +253,31 @@ void setup() {
 
 
     ////// Start RTC
+    // Started with M5StickC plus board
+
+
+    //////// If internet, start NTP client engine
+    //////// and update RTC and system time
+    //////// If no internet, get time form RTC
+    M5.Lcd.println(F("Starting NTP client engine..."));
+    timeClient.begin();
+    M5.Lcd.print(F("Trying to update NTP time..."));
+    // Try to update NTP time.
+    // If not succesful , get RTc time and continue to loop in order to monitor gas levels
+    if (!GetNTPTime()) {
+        GetRTCTime();
+        M5.Lcd.println(F("\nTime updated from RTC"));
+    }
+    else { M5.Lcd.println(F("\nTime updated from NTP")); }
     
     
     
+
+
     ////// Start Environmental III Unit
     qmp6988.init();     // Initialize pressure sensor
+
+
 
 
 
@@ -237,7 +290,7 @@ void setup() {
 
 
 
-    // Setup finish message
+    ////// Setup finish message
     M5.Lcd.println(F("Setup done!"));
     M5.Lcd.println(F("\nStarting in "));
     for (int i = 0; i <= 5; i++) {
@@ -270,18 +323,60 @@ void loop() {
     thing.handle();
 
 
+
+
+
     ////// State 2. Get time from RTC time
+    GetRTCTime();
+    if (debug) { Serial.println((String)"Time: " + h + ":" + m + ":" + s); }
+
+
+
+
+
+    ////// State 3. Update RTC time from NTP server at midnight
+    if (h == 0 &&
+        m == 0 &&
+        s == 0 &&
+        UTC_t != LastNTP) {
+        GetNTPTime();
+    }
     
     
-    
-    ////// State 3. Check if it is time to read sensors nad updtae screen
+
+
+
+    ////// State 4. Check if it is time to read sensors nad updtae screen
     if ((s % Meassure_interval == 0) && (s != LastSum)) {
-        // Read sensors 
+        // Read scale
+        memset(ScaleMessage, 0, sizeof(ScaleMessage));  // Delete old messagee
+        Serial2.print(F("P"));                          // Send Print reqest
+        while(Serial2.available() == 0) {}              // Wait for Scale response
+        int i = 0;
+        while (Serial2.available() > 0) {
+            int IncomingByte;
+            IncomingByte = Serial2.read();
+            ScaleMessage[i] = IncomingByte;
+            i++;
+        }
+        str = String(ScaleMessage);
+        if (debug) {
+            Serial.print(F("Scale full response message: "));
+            Serial.println(str);
+            Serial.print(F("Extracted value: "));
+            Serial.println(str.substring(str.indexOf("\r") + 1, str.indexOf("\r") + 8));
+        }
+        ScaleStatus = str.substring(0, str.indexOf("\r"));
+        str = str.substring(str.indexOf("\r") + 1, str.indexOf("\r") + 8);
+        Weight = str.toFloat();
+        
+        
+        // Read environmental sensors 
         Tair = sht30.cTemp;  //Store the temperature obtained from shT30. 
         RHair = sht30.humidity; //Store the humidity obtained from the SHT30.  
         Patm = qmp6988.calcPressure();
-        Tleaf = ;
-        
+        Tleaf = 0;
+
 
         // Caulculate VPD
         VPD = CalculateVPD(Tair, RHair, Tleaf);
@@ -324,7 +419,8 @@ void loop() {
         RHairSum += RHair;
         PatmSum += Patm;
         TleafSum += Tleaf;
-        VPDSum += VPD; 
+        VPDSum += VPD;
+        WeightSum += Weight;
 
         SumNum += 1;
         LastSum = s;
@@ -333,19 +429,18 @@ void loop() {
 
 
 
-    ////// State 4. Check if it is time to average and send values to IoT
+
+
+    ////// State 5. Check if it is time to average and send values to IoT
     if ((m % IoT_interval == 0) && (m != LastAvg)) {
 
     }
 
 
 
+
     
-
-
-    //
     delay(1000);
-
 }
 
 
@@ -368,7 +463,7 @@ String HexString2ASCIIString(String hexstring) {
     return temp;
 }
 
-
+/*
 unsigned int hexToDec(String hexString) {
 
     unsigned int decValue = 0;
@@ -387,14 +482,16 @@ unsigned int hexToDec(String hexString) {
 
     return decValue;
 }
-
+*/
 
 float CalculateVPD(float AirTemp, float AirRH, float LeafTemp) {
     float result = 0;
-    AirWaterPSum = /*Tarea*/;
-    LeafWaterPSum = /*Tarea*/ ;
+    AirWaterPSum = 0/*Tarea*/;
+    LeafWaterPSum = 0/*Tarea*/ ;
     result = AirWaterPSum - LeafWaterPSum;
 
     return result;
 
 }
+
+
