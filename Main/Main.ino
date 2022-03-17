@@ -1,7 +1,7 @@
 /*
  Name:		Calibration.ino
  Created:	3/14/2022 10:00 AM
- Authors:	Emmanuel Reyes, Jessica Jacobo, Paola Carrera, Aarón Vélez
+ Authors:	Emmanuel Reyes, Jessica Jacobo, Paola Carrera, AarÃ³n VÃ©lez
 */
 
 
@@ -391,8 +391,16 @@ unsigned int hexToDec(String hexString) {
 
 float CalculateVPD(float AirTemp, float AirRH, float LeafTemp) {
     float result = 0;
-    AirWaterPSum = /*Tarea*/;
-    LeafWaterPSum = /*Tarea*/ ;
+    AirWaterPSum = 0; /*Tarea*/
+ for(int = AirWaterP > 0);
+    AirWaterPSum = AirWaterPSum + AirWaterP(int)
+     break;
+ 
+    LeafWaterPSum = 0; /*Tarea*/
+ for(int = LeafWaterPSum > 0);
+    LeafWaterPSum = LeafWaterP + LeafWaterP(int)
+     break;
+ 
     result = AirWaterPSum - LeafWaterPSum;
 
     return result;
