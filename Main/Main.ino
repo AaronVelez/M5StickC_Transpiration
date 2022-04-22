@@ -317,6 +317,8 @@ void loop() {
         t_WiFiCnxTry = UTC_t;
     }
     
+
+
     
     
     ////// State 1. Keep the Iot engine runing
@@ -348,6 +350,7 @@ void loop() {
 
     ////// State 4. Check if it is time to read sensors nad updtae screen
     if ((s % Meassure_interval == 0) && (s != LastSum)) {
+        if (debug) { Serial.print(F("Time to read sensors")); }
         // Read scale
         memset(ScaleMessage, 0, sizeof(ScaleMessage));  // Delete old messagee
         Serial2.print(F("P"));                          // Send Print reqest
@@ -371,11 +374,22 @@ void loop() {
         Weight = str.toFloat();
         
         
-        // Read environmental sensors 
-        Tair = sht30.cTemp;  //Store the temperature obtained from shT30. 
-        RHair = sht30.humidity; //Store the humidity obtained from the SHT30.  
+        // Read environmental sensors
+        sht30.get();
+        Tair = sht30.cTemp;
+        RHair = sht30.humidity;
         Patm = qmp6988.calcPressure();
-        Tleaf = 0;
+        Tleaf = NCIR.readObjectTempC();
+        if(debug) {
+            Serial.print(F("Tair: "));
+            Serial.println(Tair);
+            Serial.print(F("RHair: "));
+            Serial.println(RHair);
+            Serial.print(F("Patm: "));
+            Serial.println(Patm);
+            Serial.print(F("Tleaf: "));
+            Serial.println(Tleaf);
+        }
 
 
         // Caulculate VPD
@@ -390,11 +404,11 @@ void loop() {
         // CO2 mVolt
         M5.Lcd.setTextSize(2.5);
         M5.Lcd.println();
-        M5.Lcd.println(" CO2 mV:");
+        M5.Lcd.println(" Tair (C):");
         M5.Lcd.println();
         M5.Lcd.setTextSize(3.5);
         M5.Lcd.print(" ");
-        M5.Lcd.println(0000000);
+        M5.Lcd.println(Tair);
         M5.Lcd.println();
         // CO2 ppm
         M5.Lcd.setTextSize(2.5);
@@ -433,6 +447,7 @@ void loop() {
 
     ////// State 5. Check if it is time to average and send values to IoT
     if ((m % IoT_interval == 0) && (m != LastAvg)) {
+        if (debug) { Serial.print(F("Time to calculate averages")); }
 
     }
 

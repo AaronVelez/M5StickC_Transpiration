@@ -120,7 +120,7 @@
   </ImportGroup>
   <ProjectExtensions>
     <VisualStudio>
-      <UserProperties config.Debug.customdebug_esp32_m5stick-c_debugger_type="none" />
+      <UserProperties arduino.upload.port="COM10" config.Debug.customdebug_esp32_m5stick-c_debugger_type="none" />
     </VisualStudio>
   </ProjectExtensions>
 </Project>
