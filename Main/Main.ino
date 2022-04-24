@@ -110,8 +110,8 @@ bool debug = true;
 
 
 ////// PINs
-const int Rx_PIN = 25;
-const int Tx_PIN = 26;
+//const int Rx_PIN = 25;
+//const int Tx_PIN = 26;
 
 
 ////// Time variables
@@ -137,7 +137,7 @@ int LastAvg= -1;			// Last minute that variables were averaged
 time_t t_WiFiCnxTry = 0;      // Last time a (re)connection to internet happened
 const int WiFiCnx_frq = 30;  // (re)connection to internet frequency in seconds
 
-
+int i = 0;
 
 // Variables
 const int n = 500;       // measure n times the ADC input for averaging
@@ -146,12 +146,12 @@ float Tair = 0;         // Air temperature
 float RHair = 0;        // Relative Humedity of air
 float Patm = 0;         // Atmosferic Pressure
 float Tleaf = 0;        // Leaf temperature
-float AirWaterP = 0;    // Air water vapor pressure in kPa
-float LeafWaterP = 0;   // Leaf Pressure in kPa
+float AirWaterVP = 0;    // Air water vapor pressure in kPa
+float LeafWaterVP = 0;   // Leaf Pressure in kPa
 float VPD = 0;          // Vapor Pressure Deficit
 float Weight = 0;       // Balance weight in grams
 
-char ScaleMessage[50];
+char ScaleMessage[100];
 String str;
 String ScaleStatus;
 
@@ -159,8 +159,8 @@ float TairSum = 0;
 float RHairSum = 0;    
 float PatmSum = 0;     
 float TleafSum = 0;   
-float AirWaterPSum = 0;    
-float LeafWaterPSum = 0;   
+float AirWaterVPSum = 0;    
+float LeafWaterVPSum = 0;   
 float VPDSum = 0;  
 float WeightSum = 0;
 
@@ -168,8 +168,8 @@ float TairAvg = 0;
 float RHairAvg = 0;
 float PatmAvg = 0;
 float TleafAvg = 0;
-float AirWaterPAvg = 0;
-float LeafWaterPAvg = 0;
+float AirWaterVPAvg = 0;
+float LeafWaterVPAvg = 0;
 float VPDAvg = 0;
 float WeightAvg = 0;
 
@@ -186,7 +186,8 @@ void setup() {
     M5.begin(true, true, true);
     M5.Lcd.println(F("M5 started"));
     Serial.begin(115200);
-    Serial2.begin(9600, SERIAL_8N1, Rx_PIN, Tx_PIN);
+    Serial2.begin(115200, SERIAL_8N1, Rx_PIN, Tx_PIN);
+    Serial2.setTimeout(1000);
     // Serial2.begin(unsigned long baud, uint32_t config, int8_t rxPin, int8_t txPin, bool invert)
     // Disable G36 to use G25
     gpio_pulldown_dis(GPIO_NUM_36);
@@ -235,6 +236,9 @@ void setup() {
     thing["RT_Tair"] >> [](pson& out) { out = Tair; };
     thing["RT_RHair"] >> [](pson& out) { out = RHair; };
     thing["RT_Atmmosferic_Pressure"] >> [](pson& out) { out = Patm; };
+    thing["RT_Tleaf"] >> [](pson& out) { out = Tleaf; };
+    thing["RT_AirWaterVP"] >> [](pson& out) { out = AirWaterP; };
+    thing["RT_LeafWaterVP"] >> [](pson& out) { out = LeafWaterP; };
     thing["RT_VPD"] >> [](pson& out) { out = VPD; };
     thing["RT_Weight"] >> [](pson& out) { out = Weight; };
     thing["RT_Scale_Status"] >> [](pson& out) { out = ScaleStatus; };
@@ -243,6 +247,8 @@ void setup() {
         out["Avg_Tair"] = TairAvg;
         out["Avg_RHair"] = RHairAvg;
         out["Avg_Atmmosferic_Pressure"] = PatmAvg;
+        out["Avg_AirWaterVP"] = VPDAvg;
+        out["Avg_LeafWaterVP"] = VPDAvg;
         out["Avg_VPD"] = VPDAvg;
         out["Avg_Weight"] = WeightAvg;
         out["UNIX_local"] = local_t;   
@@ -350,19 +356,49 @@ void loop() {
 
     ////// State 4. Check if it is time to read sensors nad updtae screen
     if ((s % Meassure_interval == 0) && (s != LastSum)) {
-        if (debug) { Serial.print(F("Time to read sensors")); }
+        if (debug) { Serial.println(F("Time to read sensors")); }
         // Read scale
         memset(ScaleMessage, 0, sizeof(ScaleMessage));  // Delete old messagee
         Serial2.print(F("P"));                          // Send Print reqest
-        while(Serial2.available() == 0) {}              // Wait for Scale response
-        int i = 0;
+        delay(500);
+        //while(Serial2.available() == 0) {}              // Wait for Scale response
+        
+        /*
+        
+        Serial.println(F("Reading buffer"));
+        //Serial2.setTimeout(1000);
+        str = Serial2.readString();
+        Serial.print(F("String message: "));
+        Serial.println(str);
+        */
+        
+        
+        i = 0;
         while (Serial2.available() > 0) {
             int IncomingByte;
             IncomingByte = Serial2.read();
+            Serial.print(F("Byte (DEC): "));
+            Serial.println(IncomingByte, DEC);
+            Serial.print(F("Byte (Char): "));
+            Serial.println(String(char(IncomingByte)));
             ScaleMessage[i] = IncomingByte;
             i++;
         }
-        str = String(ScaleMessage);
+        
+
+        /*
+        Serial.print(F("RAW message: "));
+        for (int j = 0; j <= sizeof(ScaleMessage); j++) {
+            Serial.print(String(char(ScaleMessage[j])));
+        }
+        Serial.println();
+        */
+        
+        
+        
+        
+        
+        //str = String(ScaleMessage);
         if (debug) {
             Serial.print(F("Scale full response message: "));
             Serial.println(str);
@@ -378,7 +414,7 @@ void loop() {
         sht30.get();
         Tair = sht30.cTemp;
         RHair = sht30.humidity;
-        Patm = qmp6988.calcPressure();
+        Patm = qmp6988.calcPressure() / 1000;   // in kPa
         Tleaf = NCIR.readObjectTempC();
         if(debug) {
             Serial.print(F("Tair: "));
@@ -397,36 +433,41 @@ void loop() {
 
 
         // Update Screen
-    // Reset screen
+        
+        // Reset screen
         M5.Lcd.fillScreen(BLACK);
         M5.Lcd.setTextColor(WHITE);
         M5.Lcd.setCursor(0, 0);
-        // CO2 mVolt
         M5.Lcd.setTextSize(2.5);
+        // Tair
         M5.Lcd.println();
         M5.Lcd.println(" Tair (C):");
-        M5.Lcd.println();
-        M5.Lcd.setTextSize(3.5);
+        //M5.Lcd.println();
         M5.Lcd.print(" ");
         M5.Lcd.println(Tair);
         M5.Lcd.println();
-        // CO2 ppm
-        M5.Lcd.setTextSize(2.5);
-        M5.Lcd.println(" CO2 ppm:");
+        // RHair
         M5.Lcd.println();
-        M5.Lcd.setTextSize(3.5);
+        M5.Lcd.println(" RHair (%):");
+        //M5.Lcd.println();
         M5.Lcd.print(" ");
-        M5.Lcd.println(000000);
+        M5.Lcd.println(RHair);
         M5.Lcd.println();
-        // Calibration status
-        /*
-        M5.Lcd.setTextSize(2.5);
-        M5.Lcd.println(" Is Cal?");
+        // Tleaf
         M5.Lcd.println();
-        M5.Lcd.setTextSize(3.5);
+        M5.Lcd.println(" Tleaf (C):");
+        //M5.Lcd.println();
         M5.Lcd.print(" ");
-        M5.Lcd.println(IsCal);
-        */
+        M5.Lcd.println(Tleaf);
+        M5.Lcd.println();
+        // VPD
+        M5.Lcd.println();
+        M5.Lcd.println(" VPD (kPa):");
+        //M5.Lcd.println();
+        M5.Lcd.print(" ");
+        M5.Lcd.println(VPD);
+        M5.Lcd.println();
+
 
         // Sum values
         TairSum += Tair;
@@ -447,7 +488,30 @@ void loop() {
 
     ////// State 5. Check if it is time to average and send values to IoT
     if ((m % IoT_interval == 0) && (m != LastAvg)) {
-        if (debug) { Serial.print(F("Time to calculate averages")); }
+        if (debug) { Serial.println(F("Time to calculate averages")); }
+
+        TairAvg = TairSum / SumNum;
+        RHairAvg = RHairSum / SumNum;
+        PatmAvg = PatmSum / SumNum;
+        TleafAvg = TleafSum / SumNum;
+        VPDAvg = VPDSum / SumNum;
+        WeightAvg = WeightSum / SumNum;
+
+
+        // Reset registers
+        TairSum = 0;
+        RHairSum = 0;
+        PatmSum = 0;
+        TleafSum = 0;
+        VPDSum = 0;
+        WeightSum = 0;
+
+        SumNum = 0;
+        LastAvg = m;
+
+
+        // Sent Avg data to IoT
+        thing.write_bucket(iot_data_bucket, "Avg_Data", false);
 
     }
 
