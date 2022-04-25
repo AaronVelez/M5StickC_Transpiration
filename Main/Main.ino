@@ -138,16 +138,16 @@ const int WiFiCnx_frq = 30;  // (re)connection to internet frequency in seconds
 
 
 // Variables
-const int n = 500;       // measure n times the ADC input for averaging
+const int n = 500;          // measure n times the ADC input for averaging
  
-float Tair = 0;         // Air temperature
-float RHair = 0;        // Relative Humedity of air
-float Patm = 0;         // Atmosferic Pressure
-float Tleaf = 0;        // Leaf temperature
-float AirWaterVP = 0;    // Air water vapor pressure in kPa
-float LeafWaterVP = 0;   // Leaf Pressure in kPa
-float VPD = 0;          // Vapor Pressure Deficit
-float Weight = 0;       // Balance weight in grams
+float Tair = 0;             // Air temperature
+float RHair = 0;            // Relative Humedity of air
+float Patm = 0;             // Atmosferic Pressure
+float Tleaf = 0;            // Leaf temperature
+float AirWaterVP = 0;       // Air water vapor pressure in kPa
+float LeafWaterVP = 0;      // Leaf Pressure in kPa
+float VPD = 0;              // Vapor Pressure Deficit
+float Weight = 0;           // Balance weight in grams
 
 float TairSum = 0;     
 float RHairSum = 0;    
@@ -166,6 +166,8 @@ float AirWaterVPAvg = 0;
 float LeafWaterVPAvg = 0;
 float VPDAvg = 0;
 float WeightAvg = 0;
+float LastWeightAvg = 0;
+float TranspirationAvg = 0;
 
 
 
@@ -229,16 +231,17 @@ void setup() {
     thing["RT_LeafWaterVP"] >> [](pson& out) { out = LeafWaterVP; };
     thing["RT_VPD"] >> [](pson& out) { out = VPD; };
     thing["RT_Weight"] >> [](pson& out) { out = Weight; };
-    thing["RT_Scale_Status"] >> [](pson& out) { out = ScaleStatus; };
 
     thing["Avg_Data"] >> [](pson& out) {
         out["Avg_Tair"] = TairAvg;
         out["Avg_RHair"] = RHairAvg;
+        out["Avg_Tleaf"] = Tleaf;
         out["Avg_Atmmosferic_Pressure"] = PatmAvg;
         out["Avg_AirWaterVP"] = VPDAvg;
         out["Avg_LeafWaterVP"] = VPDAvg;
         out["Avg_VPD"] = VPDAvg;
         out["Avg_Weight"] = WeightAvg;
+        out["Avg_Transpiration"] = TranspirationAvg;
         out["UNIX_local"] = local_t;   
     };
 
@@ -378,7 +381,10 @@ void loop() {
 
 
         // Caulculate VPD
-        VPD = CalculateVPD(Tair, RHair, Tleaf);
+
+        AirWaterVP = CalculateVP(Tair, RHair);
+        LeafWaterVP = CalculateVP(Tleaf, 100);
+        VPD = CalculateVPD(AirWaterVP, LeafWaterVP);
 
 
         // Update Screen
@@ -423,6 +429,8 @@ void loop() {
         RHairSum += RHair;
         PatmSum += Patm;
         TleafSum += Tleaf;
+        AirWaterVPSum += AirWaterVP;
+        LeafWaterVPSum += LeafWaterVP;
         VPDSum += VPD;
         WeightSum += Weight;
 
@@ -443,8 +451,14 @@ void loop() {
         RHairAvg = RHairSum / SumNum;
         PatmAvg = PatmSum / SumNum;
         TleafAvg = TleafSum / SumNum;
+        AirWaterVPAvg = AirWaterVPSum / SumNum;
+        LeafWaterVPAvg = LeafWaterVPSum / SumNum;
         VPDAvg = VPDSum / SumNum;
+        
+        LastWeightAvg = WeightAvg;
         WeightAvg = WeightSum / SumNum;
+
+        TranspirationAvg = (LastWeightAvg - WeightAvg) / IoT_interval / 1000;  // Plant transpiration in g min-1
 
 
         // Reset registers
@@ -452,6 +466,8 @@ void loop() {
         RHairSum = 0;
         PatmSum = 0;
         TleafSum = 0;
+        AirWaterVPSum = 0;
+        LeafWaterVPSum = 0;
         VPDSum = 0;
         WeightSum = 0;
 
@@ -491,35 +507,20 @@ String HexString2ASCIIString(String hexstring) {
     return temp;
 }
 
-/*
-unsigned int hexToDec(String hexString) {
 
-    unsigned int decValue = 0;
-    int nextInt;
-
-    for (int i = 0; i < hexString.length(); i++) {
-
-        nextInt = int(hexString.charAt(i));
-        if (nextInt >= 48 && nextInt <= 57) nextInt = map(nextInt, 48, 57, 0, 9);
-        if (nextInt >= 65 && nextInt <= 70) nextInt = map(nextInt, 65, 70, 10, 15);
-        if (nextInt >= 97 && nextInt <= 102) nextInt = map(nextInt, 97, 102, 10, 15);
-        nextInt = constrain(nextInt, 0, 15);
-
-        decValue = (decValue * 16) + nextInt;
-    }
-
-    return decValue;
-}
-*/
-
-float CalculateVPD(float AirTemp, float AirRH, float LeafTemp) {
+float CalculateVP(float Temp, float RH) {
     float result = 0;
-    AirWaterVPSum = 0/*Tarea*/;
-    LeafWaterVPSum = 0/*Tarea*/ ;
-    result = AirWaterVPSum - LeafWaterVPSum;
-
+    result = 6.1121 * exp( (18.678-(Temp/234.5)) * (Temp/(257.14+Temp)) );  // Arden Buck equation (in hPa)
+    result = result * RH / 100;     // Adjust for RH
+    result = result * 0.1;          // Convert to kPa
     return result;
+}
 
+
+float CalculateVPD(float AirVP, float LeafVP) {
+    float result = 0;
+    result = LeafVP - AirVP;
+    return result;
 }
 
 
