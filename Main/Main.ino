@@ -89,6 +89,10 @@ Adafruit_MLX90614 NCIR = Adafruit_MLX90614();
 
 
 
+////// Raspberry Pi
+#define PI_HEADER  "P"   // Header tag for serial raspberry pi message
+
+
 
 //////////////////////////////////////////
 ////// User Constants and Variables //////
@@ -107,11 +111,6 @@ String IoT_Station_Name = F("Tor Rey IoT");
 String Firmware = F("v1.0.0");
 
 bool debug = true;
-
-
-////// PINs
-//const int Rx_PIN = 25;
-//const int Tx_PIN = 26;
 
 
 ////// Time variables
@@ -137,7 +136,6 @@ int LastAvg= -1;			// Last minute that variables were averaged
 time_t t_WiFiCnxTry = 0;      // Last time a (re)connection to internet happened
 const int WiFiCnx_frq = 30;  // (re)connection to internet frequency in seconds
 
-int i = 0;
 
 // Variables
 const int n = 500;       // measure n times the ADC input for averaging
@@ -150,10 +148,6 @@ float AirWaterVP = 0;    // Air water vapor pressure in kPa
 float LeafWaterVP = 0;   // Leaf Pressure in kPa
 float VPD = 0;          // Vapor Pressure Deficit
 float Weight = 0;       // Balance weight in grams
-
-char ScaleMessage[100];
-String str;
-String ScaleStatus;
 
 float TairSum = 0;     
 float RHairSum = 0;    
@@ -186,12 +180,6 @@ void setup() {
     M5.begin(true, true, true);
     M5.Lcd.println(F("M5 started"));
     Serial.begin(115200);
-    Serial2.begin(115200, SERIAL_8N1, Rx_PIN, Tx_PIN);
-    Serial2.setTimeout(1000);
-    // Serial2.begin(unsigned long baud, uint32_t config, int8_t rxPin, int8_t txPin, bool invert)
-    // Disable G36 to use G25
-    gpio_pulldown_dis(GPIO_NUM_36);
-    gpio_pullup_dis(GPIO_NUM_36);
 
 #ifdef WiFi_SSID_is_HEX
     String ssidStr = HexString2ASCIIString(ssidHEX);
@@ -237,8 +225,8 @@ void setup() {
     thing["RT_RHair"] >> [](pson& out) { out = RHair; };
     thing["RT_Atmmosferic_Pressure"] >> [](pson& out) { out = Patm; };
     thing["RT_Tleaf"] >> [](pson& out) { out = Tleaf; };
-    thing["RT_AirWaterVP"] >> [](pson& out) { out = AirWaterP; };
-    thing["RT_LeafWaterVP"] >> [](pson& out) { out = LeafWaterP; };
+    thing["RT_AirWaterVP"] >> [](pson& out) { out = AirWaterVP; };
+    thing["RT_LeafWaterVP"] >> [](pson& out) { out = LeafWaterVP; };
     thing["RT_VPD"] >> [](pson& out) { out = VPD; };
     thing["RT_Weight"] >> [](pson& out) { out = Weight; };
     thing["RT_Scale_Status"] >> [](pson& out) { out = ScaleStatus; };
@@ -357,58 +345,19 @@ void loop() {
     ////// State 4. Check if it is time to read sensors nad updtae screen
     if ((s % Meassure_interval == 0) && (s != LastSum)) {
         if (debug) { Serial.println(F("Time to read sensors")); }
-        // Read scale
-        memset(ScaleMessage, 0, sizeof(ScaleMessage));  // Delete old messagee
-        Serial2.print(F("P"));                          // Send Print reqest
-        delay(500);
-        //while(Serial2.available() == 0) {}              // Wait for Scale response
         
-        /*
-        
-        Serial.println(F("Reading buffer"));
-        //Serial2.setTimeout(1000);
-        str = Serial2.readString();
-        Serial.print(F("String message: "));
-        Serial.println(str);
-        */
-        
-        
-        i = 0;
-        while (Serial2.available() > 0) {
-            int IncomingByte;
-            IncomingByte = Serial2.read();
-            Serial.print(F("Byte (DEC): "));
-            Serial.println(IncomingByte, DEC);
-            Serial.print(F("Byte (Char): "));
-            Serial.println(String(char(IncomingByte)));
-            ScaleMessage[i] = IncomingByte;
-            i++;
+        // Get scale data from Raspberry pi
+        if (Serial.find(PI_HEADER)) {
+            if (Serial.available()) {
+                Weight = Serial.parseFloat();
+                if (debug) {
+                    Serial.print(F("Raspberry pi weight: "));
+                    Serial.println(Weight);
+                }
+            
+            }
         }
-        
 
-        /*
-        Serial.print(F("RAW message: "));
-        for (int j = 0; j <= sizeof(ScaleMessage); j++) {
-            Serial.print(String(char(ScaleMessage[j])));
-        }
-        Serial.println();
-        */
-        
-        
-        
-        
-        
-        //str = String(ScaleMessage);
-        if (debug) {
-            Serial.print(F("Scale full response message: "));
-            Serial.println(str);
-            Serial.print(F("Extracted value: "));
-            Serial.println(str.substring(str.indexOf("\r") + 1, str.indexOf("\r") + 8));
-        }
-        ScaleStatus = str.substring(0, str.indexOf("\r"));
-        str = str.substring(str.indexOf("\r") + 1, str.indexOf("\r") + 8);
-        Weight = str.toFloat();
-        
         
         // Read environmental sensors
         sht30.get();
@@ -565,9 +514,9 @@ unsigned int hexToDec(String hexString) {
 
 float CalculateVPD(float AirTemp, float AirRH, float LeafTemp) {
     float result = 0;
-    AirWaterPSum = 0/*Tarea*/;
-    LeafWaterPSum = 0/*Tarea*/ ;
-    result = AirWaterPSum - LeafWaterPSum;
+    AirWaterVPSum = 0/*Tarea*/;
+    LeafWaterVPSum = 0/*Tarea*/ ;
+    result = AirWaterVPSum - LeafWaterVPSum;
 
     return result;
 
