@@ -455,10 +455,17 @@ void loop() {
         LeafWaterVPAvg = LeafWaterVPSum / SumNum;
         VPDAvg = VPDSum / SumNum;
         
-        LastWeightAvg = WeightAvg;
-        WeightAvg = WeightSum / SumNum;
-
-        TranspirationAvg = (LastWeightAvg - WeightAvg) / IoT_interval / 1000;  // Plant transpiration in g min-1
+        if (LastWeightAvg == 0) {
+            LastWeightAvg = WeightAvg;
+            WeightAvg = WeightSum / SumNum;
+            // Skip Transpiration calculation to prevent errors
+        }
+        else {
+            LastWeightAvg = WeightAvg;
+            WeightAvg = WeightSum / SumNum;
+            // Transpiration calculation
+            TranspirationAvg = (LastWeightAvg - WeightAvg) / IoT_interval * 1000;  // Plant transpiration in g min-1
+        }     
 
 
         // Reset registers
